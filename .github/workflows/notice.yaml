@@ -1,0 +1,40 @@
+name: Update NOTICE file
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  update-notice:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install FOSSA CLI
+        run: |
+          curl -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/fossas/fossa-cli/master/install.sh | bash
+      - name: Run FOSSA CLI
+        run: |
+          fossa analyze  --include-unused-deps --debug
+          fossa report attribution --format text > /tmp/NOTICE
+        env:
+          FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
+      - name: upload NOTICE file
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOTICE
+          path: /tmp/NOTICE
+      - name: Update NOTICE file
+        run: |
+          echo "This is a notice file" > NOTICE
+      - name: Commit changes
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add NOTICE
+          git commit -m "Update NOTICE file"
+          git push
