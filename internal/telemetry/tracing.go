@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -52,6 +53,31 @@ type customTracer struct {
 	samplingRatio float64
 }
 
+// parseOTLPEndpoint extracts the host:port from an endpoint string that may
+// contain a URI scheme (e.g. "http://host:4317"). The OTEL_EXPORTER_OTLP_ENDPOINT
+// env var uses full URIs per the OpenTelemetry spec, but the gRPC exporter's
+// WithEndpoint expects a bare host:port.
+//
+// Returns the cleaned endpoint and whether the scheme indicates an insecure
+// (http) connection.
+func parseOTLPEndpoint(endpoint string) (string, bool) {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		// Not a valid URI — treat as a bare host:port.
+		return endpoint, false
+	}
+
+	switch u.Scheme {
+	case "http":
+		return u.Host, true
+	case "https":
+		return u.Host, false
+	default:
+		// Unknown scheme — return as-is.
+		return endpoint, false
+	}
+}
+
 func MustNewTracerProvider(opts ...TracerOption) *sdktrace.TracerProvider {
 	tracer := &customTracer{
 		endpoint:      "",
@@ -79,15 +105,17 @@ func MustNewTracerProvider(opts ...TracerOption) *sdktrace.TracerProvider {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	endpoint, schemeInsecure := parseOTLPEndpoint(tracer.endpoint)
+
 	options := []otlptracegrpc.Option{
-		otlptracegrpc.WithEndpoint(tracer.endpoint),
+		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithDialOption(
 			// nolint:staticcheck // ignoring gRPC deprecations
 			grpc.WithBlock(),
 		),
 	}
 
-	if tracer.insecure {
+	if tracer.insecure || schemeInsecure {
 		options = append(options, otlptracegrpc.WithInsecure())
 	}
 
